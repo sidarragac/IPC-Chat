@@ -32,5 +32,5 @@ go.work.sum
 # .vscode/
 
 # Program Executables
-/server
-/client
+Server/server
+Client/client
