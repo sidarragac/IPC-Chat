@@ -1,11 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -15,86 +15,113 @@ import (
 var rooms = []string{"general", "deportes", "musica"}
 
 type Message struct {
-	ClientId string
-	Name     string
-	Text     string
-	DateTime string
+	Type      string // "register" o "chat"
+	ClientId  string
+	Name      string
+	Text      string
+	DateTime  string
+	QueueName string // solo en "register"
 }
 
-// Mapa de sala → *MessageQueue
-var queues = make(map[string]*posix_mq.MessageQueue)
+// Cola de entrada por sala
+var inputQueues = make(map[string]*posix_mq.MessageQueue)
+
+// Mapa de sala → colas de salida de clientes
+var outputQueues = make(map[string]map[string]*posix_mq.MessageQueue)
 
 func initRooms() {
 	for _, room := range rooms {
-		name := "/" + room
-		mq, err := posix_mq.NewMessageQueue(name, posix_mq.O_CREAT|posix_mq.O_RDWR, 0666, nil)
+		inName := "/" + room + "_in"
+		q, err := posix_mq.NewMessageQueue(inName, posix_mq.O_CREAT|posix_mq.O_RDONLY, 0666, nil)
 		if err != nil {
-			log.Fatalf("Error al crear o abrir cola para sala %s: %v", room, err)
+			log.Fatalf("Error creando cola de entrada para sala %s: %v", room, err)
 		}
-		queues[room] = mq
-		fmt.Printf("Sala creada/abierta: %s\n", room)
+		inputQueues[room] = q
+		outputQueues[room] = make(map[string]*posix_mq.MessageQueue)
+
+		fmt.Printf("Sala creada: %s\n", room)
 	}
 }
 
 func cleanup() {
-	for _, room := range rooms {
-		if q, ok := queues[room]; ok {
+	for _, q := range inputQueues {
+		q.Close()
+		q.Unlink()
+	}
+	for _, clients := range outputQueues {
+		for _, q := range clients {
 			q.Close()
-			// unlink para eliminar cola
-			err := q.Unlink()
-			if err != nil {
-				fmt.Printf("Error unlink sala %s: %v\n", room, err)
-			} else {
-				fmt.Printf("Sala unlink: %s\n", room)
-			}
+			q.Unlink()
 		}
 	}
 }
 
 func main() {
 	fmt.Println("Servidor iniciado con POSIX MQ")
-
 	initRooms()
 
-	// Capturar señales para limpiar al salir
+	// Capturar señales
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigc
-		fmt.Println("\nRecibida señal de terminación, limpiando...")
+		fmt.Println("\nDeteniendo servidor...")
 		cleanup()
 		os.Exit(0)
 	}()
 
-	// Para cada sala, correr un listener que “rebota” los mensajes
+	// Listener por sala
 	for _, room := range rooms {
 		go func(room string) {
-			q := queues[room]
+			inQueue := inputQueues[room]
 			for {
-				msg, _, err := q.Receive()
+				msgBytes, _, err := inQueue.Receive()
 				if err != nil {
-					log.Printf("Error recibiendo mensaje en sala %s: %v", room, err)
+					log.Printf("[%s] Error recibiendo mensaje: %v", room, err)
 					time.Sleep(1 * time.Second)
 					continue
 				}
-				text := string(msg)
-				text = strings.TrimSpace(text)
-				if text == "" {
+
+				var msg Message
+				if err := json.Unmarshal(msgBytes, &msg); err != nil {
+					log.Printf("[%s] Error parseando mensaje: %v", room, err)
 					continue
 				}
-				// Mostrar en servidor
-				fmt.Printf("[%s] Recibido: %s\n", room, text)
 
-				// Reenviar el mensaje a la cola de la sala (broadcast)
-				// Todos los clientes escuchan la misma cola de sala
-				err2 := q.Send([]byte(text), 0)
-				if err2 != nil {
-					log.Printf("Error reenviando mensaje en sala %s: %v", room, err2)
+				switch msg.Type {
+				case "register":
+					outQueue, err := posix_mq.NewMessageQueue(msg.QueueName, posix_mq.O_WRONLY, 0666, nil)
+					if err != nil {
+						log.Printf("[%s] Error creando cola de salida %s: %v", room, msg.QueueName, err)
+						continue
+					}
+					outputQueues[room][msg.ClientId] = outQueue
+					log.Printf("[%s] Cliente %s registrado en %s", room, msg.ClientId, msg.QueueName)
+
+				case "chat":
+					log.Printf("[%s] Mensaje de %s: %s", room, msg.Name, msg.Text)
+
+					// Enviar a todos los clientes de la sala
+					for clientID, outQ := range outputQueues[room] {
+						// Clonar el mensaje para cada cliente
+						outMsg := msg
+						// Opcional: evitar reenviar al mismo cliente si quieres
+						// if clientID == msg.ClientId {
+						//     continue
+						// }
+
+						data, _ := json.Marshal(outMsg)
+						if err := outQ.Send(data, 0); err != nil {
+							log.Printf("[%s] Error enviando a %s: %v", room, clientID, err)
+						}
+					}
+
+				default:
+					log.Printf("[%s] Tipo de mensaje desconocido: %s", room, msg.Type)
 				}
 			}
 		}(room)
 	}
 
-	// Mantener al servidor vivo
-	select {}
+	select {} // Mantener vivo
 }
