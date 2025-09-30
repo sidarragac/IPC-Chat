@@ -34,3 +34,7 @@ go.work.sum
 # Program Executables
 Server/server
 Client/client
+
+# Logs
+*.json
+logs/
