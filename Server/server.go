@@ -72,7 +72,7 @@ func createJSONLogFiles(rooms []string) {
 
 func logMessagesToFile(msgLogs map[string][]Message) {
 	for room, msgLogs := range msgLogs {
-		fileName := fmt.Sprintf("%s.json", room)
+		fileName := fmt.Sprintf("Logs/%s.json", room)
 		file, err := os.OpenFile(fileName, os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			log.Printf("Error abriendo archivo de log para sala %s: %v", room, err)
