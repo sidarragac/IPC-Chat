@@ -56,8 +56,8 @@ func cleanup() {
 	}
 }
 
-
 func createJSONLogFiles(rooms []string) {
+	os.MkdirAll("Logs", 0755)
 	for _, room := range rooms {
 		file, err := os.Create(fmt.Sprintf("Logs/%s.json", room))
 		if err != nil {
@@ -87,7 +87,6 @@ func logMessagesToFile(msgLogs map[string][]Message) {
 		}
 	}
 }
-
 
 func main() {
 	// Crear archivos de log JSON
