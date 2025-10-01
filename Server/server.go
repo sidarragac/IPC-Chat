@@ -56,7 +56,45 @@ func cleanup() {
 	}
 }
 
+
+func createJSONLogFiles(rooms []string) {
+	for _, room := range rooms {
+		file, err := os.Create(fmt.Sprintf("Logs/%s.json", room))
+		if err != nil {
+			log.Printf("Error creando archivo de log para sala %s: %v", room, err)
+			continue
+		}
+		defer file.Close()
+
+		log.Printf("Archivo de log creado para sala %s", room)
+	}
+}
+
+func logMessagesToFile(msgLogs map[string][]Message) {
+	for room, msgLogs := range msgLogs {
+		fileName := fmt.Sprintf("Logs/%s.json", room)
+		file, err := os.OpenFile(fileName, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Error abriendo archivo de log para sala %s: %v", room, err)
+			return
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ") // makes it human-readable
+		if err := encoder.Encode(msgLogs); err != nil {
+			log.Printf("Error escribiendo en archivo de log para sala %s: %v", room, err)
+		}
+	}
+}
+
+
 func main() {
+	// Crear archivos de log JSON
+	createJSONLogFiles(rooms)
+	// Diccionario de salas, cada una con su lista de mensajes
+	msgLogs := make(map[string][]Message)
+
 	fmt.Println("Servidor iniciado con POSIX MQ")
 	initRooms()
 
@@ -66,6 +104,8 @@ func main() {
 	go func() {
 		<-sigc
 		fmt.Println("\nDeteniendo servidor...")
+
+		logMessagesToFile(msgLogs)
 		cleanup()
 		os.Exit(0)
 	}()
@@ -100,6 +140,8 @@ func main() {
 
 				case "chat":
 					log.Printf("[%s] Mensaje de %s: %s", room, msg.Name, msg.Text)
+					// PONER STORE EN JSON
+					msgLogs[room] = append(msgLogs[room], msg)
 
 					// Enviar a todos los clientes de la sala
 					for clientID, outQ := range outputQueues[room] {
