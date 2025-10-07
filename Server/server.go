@@ -146,10 +146,6 @@ func main() {
 					for clientID, outQ := range outputQueues[room] {
 						// Clonar el mensaje para cada cliente
 						outMsg := msg
-						// Opcional: evitar reenviar al mismo cliente si quieres
-						// if clientID == msg.ClientId {
-						//     continue
-						// }
 
 						data, _ := json.Marshal(outMsg)
 						if err := outQ.Send(data, 0); err != nil {
